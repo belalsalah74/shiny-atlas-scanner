@@ -64,7 +64,7 @@ class IdentityTests(unittest.TestCase):
         self.assertIn(("redirected", 5012), session.calls)
         self.assertIn(("redirected", 1504), session.calls)
         self.assertIn(163, session.calls)
-        self.assertEqual(session.calls[-1], ("redirected", 160))
+        self.assertEqual(session.calls[-2:], [("redirected", 160), 160])
 
     def test_rejects_ambiguous_multiple_new_ids(self):
         class AmbiguousSession(FakeSession):
