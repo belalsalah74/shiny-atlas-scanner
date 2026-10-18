@@ -41,6 +41,9 @@ class GameSession(Protocol):
     lon: float
 
     def rpc(self, method: int, payload: bytes = b"") -> bytes: ...
+    def redirected_rpc(self, method: int, payload: bytes = b"") -> bytes:
+        """Run a non-allowlisted RPC through this session's in-process hook."""
+        ...
 
     def close(self) -> None: ...
 
@@ -112,7 +115,14 @@ class RaidLobbyIdentityResolver:
             self._leave_lobby()
 
     def _native(self, method: int, payload: bytes = b"") -> dict[int, list]:
-        return fields(self.session.rpc(method, payload))
+        # The stock client/scanner path directly allows only map/gym/details
+        # reads. Social search, invite, lobby join/leave and free-ticket claim
+        # must go through our local nonce-checked in-process RPC redirector.
+        if method in (106, GYM_INFO_METHOD, RAID_DETAILS_METHOD):
+            reply = self.session.rpc(method, payload)
+        else:
+            reply = self.session.redirected_rpc(method, payload)
+        return fields(reply)
 
     def _search(self, code: str) -> tuple[str, str]:
         payload = (
