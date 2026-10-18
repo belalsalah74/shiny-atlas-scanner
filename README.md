@@ -1,44 +1,63 @@
-# Shiny Atlas Scanner Service
+# Shiny Atlas Scanner — in-house resolver
 
-A research prototype for a **controlled and authorized client/session workflow** supporting Shiny Atlas. This project is separate from the Shiny Atlas frontend and mapper integration.
+This repository contains an independently implemented **local Pokémon GO session resolver**. It does not call CEA, Poliswag, or any remote Trainer Code resolver API. The prediction/map application remains separate.
 
-## Important distinction: Player ID discovery is not mapping
+## Implemented here
 
-The project must solve two different problems, and must not conflate them:
+- \`scanner_service/proto.py\`: small protobuf wire codec for the observed game message fields.
+- \`scanner_service/raid_discovery.py\`: asks the authenticated game session for nearby map cells (\`GET_MAP_OBJECTS\`, method 106) and selects a usable low-tier raid from that response. No mapper endpoint is used.
+- \`scanner_service/identity.py\`: searches by Trainer Code, uses the viewer-scoped friend-search ID only to send the raid invitation, then accepts the internal ID only when exactly one new \`invited_player_ids\` value appears in the lobby response. It leaves the lobby and does not start a battle.
+- \`scanner_service/server.py\`: loopback-only HTTP interface with bearer auth, explicit allowlist, required consent reference, fail-closed configuration and redacted logs.
+- \`tests/\`: deterministic unit tests with a fake session. These verify protocol flow and safety checks but are not proof of live-game compatibility.
 
-1. **Trainer Code → internal Player ID resolution.** This is an account-identity/linking workflow. A 12-digit Trainer Code is not the internal Player ID used by the account-specific calculation. It cannot be converted locally by a known public formula.
-2. **Map/encounter data collection.** A mapper can supply nearby Pokémon records and, depending on its schema, encounter IDs. It does not automatically reveal the internal Player ID for a Trainer Code.
+## Critical current limitation
 
-The scanner/map is not the mechanism for discovering the Trainer ID. The service therefore treats identity resolution as a separate adapter with its own authorization, consent and validation requirements.
+**A live authenticated game-session transport adapter is not included yet.** The API expects a locally installed module specified by \`SHINY_ATLAS_SESSION_FACTORY=module:function\`; that factory must connect the local resolver to an authenticated game session owned by the operator and provide \`rpc(method, payload)\`, \`lat\`, \`lon\`, \`host\`, and \`close()\`. Until this adapter is implemented and validated on the target game version, \`/health\` reports \`not_configured\` and live resolution is refused. The code does not invent Player IDs or fall back to an external service.
 
-## Current status
+## Run tests
 
-This repository begins with the service architecture and discovery requirements. It does **not** claim to implement a working Pokémon GO protocol client, bypass account authentication, or resolve a Trainer Code without an authorized source.
+Python 3.10+:
 
-A client adapter must remain replaceable and must only use a game-client/device session and account access that the operator is authorized to control. Until an approved source is connected, identity resolution should return an explicit `not_configured` / `unsupported` state rather than fabricated data.
+\`\`\`sh
+python -m unittest discover -s tests -v
+\`\`\`
 
-## Proposed architecture
+## Configure the local API
 
-- **API service:** authenticates clients, applies an explicit allowlist, creates jobs, and returns status.
-- **Identity-resolution adapter:** separate interface to an authorized identity source. Does not query a mapper to guess an account ID.
-- **Session runner/agent:** communicates with an operator-controlled client/device environment; no credential harvesting or login bypass.
-- **Mapper adapter (optional and separate):** retrieves location/encounter records, not Player ID identity.
-- **Audit/test layer:** fixtures, contract tests, rate limits, job expiry, and secret-free logging.
+Install the S2 helper for local cell geometry:
 
-## Identity resolution acceptance criteria
+\`\`\`sh
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+\`\`\`
 
-Before any live integration is marked working, it must:
-- identify the authorized source of the internal Player ID;
-- verify that the returned identifier matches the expected internal ID format and source contract;
-- use an explicit Trainer Code allowlist or equivalent consent check;
-- never infer the Player ID from a friend code, coordinates, spawn ID, or encounter ID;
-- keep authentication tokens out of browser code, logs, commits, and test fixtures;
-- fail closed when no supported source is configured.
+Set an explicit allowlist containing only your own Trainer Code and codes whose owners have consented. Do not set wildcards.
 
-## Development
+\`\`\`sh
+export SHINY_ATLAS_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export SHINY_ATLAS_ALLOWED_CODES="REPLACE_WITH_12_DIGIT_CODE"
+export SHINY_ATLAS_SESSION_FACTORY="my_local_adapter:create_session"
+python -m scanner_service.server
+\`\`\`
 
-This is currently an architecture and integration scaffold. Keep protocol-specific assumptions and external dependencies documented, and add deterministic mocked tests before enabling live integrations.
+Example request:
 
-## Scope note
+\`\`\`sh
+curl -sS http://127.0.0.1:8788/api/resolve \\
+  -H "Authorization: Bearer $SHINY_ATLAS_API_TOKEN" \\
+  -H 'Content-Type: application/json' \\
+  -d '{"trainerCode":"REPLACE_WITH_12_DIGIT_CODE","consentRef":"my-owned-test-account"}'
+\`\`\`
 
-The goal is to build an independently understandable workflow, not to depend on a ready-made shiny-prediction product. That does not make private game identifiers derivable from public spawn data. A valid resolution source and authorized session are still required.
+\`consentRef\` is a caller-provided audit label; do not put passwords or tokens in it. The raw Trainer Code and Player ID are not written to logs. Never commit game credentials, refresh tokens, or session captures.
+
+## Workflow
+
+1. The operator allowlists a consenting account.
+2. The local adapter connects to the operator-controlled authenticated game client/session.
+3. The resolver queries the game map using that session and selects a raid with at least 15 minutes remaining.
+4. It runs the one-at-a-time search → invite → lobby ID correlation procedure, with the lobby always left in a \`finally\` cleanup path.
+5. The service returns the validated internal Player ID to the caller for local shiny calculation.
+
+Read [\`docs/INTERNAL_RESOLVER_DESIGN.md\`](docs/INTERNAL_RESOLVER_DESIGN.md) for protocol semantics and remaining work.
