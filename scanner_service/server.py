@@ -152,13 +152,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(403, {"status": "denied", "error": str(exc)})
         except ValueError as exc:
             self._send(400, {"status": "invalid_request", "error": str(exc)[:180]})
+        except ResolutionError as exc:
+            self._send(502, {"status": "failed", "error": str(exc)[:180]})
         except RuntimeError as exc:
             if str(exc).startswith("not_configured:"):
                 self._send(503, {"status": "not_configured", "error": str(exc).split(":", 1)[1].strip()})
             else:
                 self._send(503, {"status": "unavailable", "error": "Local game-session adapter unavailable"})
-        except ResolutionError as exc:
-            self._send(502, {"status": "failed", "error": str(exc)[:180]})
         except Exception as exc:
             LOG.error("unhandled_resolution_error type=%s", type(exc).__name__)
             self._send(502, {"status": "failed", "error": "The local game-session lookup failed"})
