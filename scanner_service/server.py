@@ -65,6 +65,15 @@ def _resolve(code: str, consent_ref: str) -> dict[str, Any]:
 
     session = factory()
     try:
+        missing = [
+            name for name in ("rpc", "redirected_rpc", "close")
+            if not callable(getattr(session, name, None))
+        ]
+        missing.extend(name for name in ("host", "lat", "lon") if not hasattr(session, name))
+        if missing:
+            raise RuntimeError(
+                "not_configured: local game-session adapter is missing required interface members"
+            )
         raid = find_usable_raid(session)
         identity = RaidLobbyIdentityResolver(session).resolve(code, raid)
         LOG.info("resolution_succeeded code_ref=%s consent_ref_present=true", _safe_fingerprint(code))
