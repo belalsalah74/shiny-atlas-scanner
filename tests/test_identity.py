@@ -40,6 +40,10 @@ class FakeSession:
             return int_field(1, 1)
         raise AssertionError(f"Unexpected RPC method {method}")
 
+    def redirected_rpc(self, method, payload=b""):
+        self.calls.append(("redirected", method))
+        return self.rpc(method, payload)
+
     def close(self):
         pass
 
@@ -57,10 +61,10 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(result.player_id, session.real_id)
         self.assertNotEqual(result.player_id, session.seen_id)
         self.assertEqual(result.trainer_name, "Test Trainer")
-        self.assertIn(5012, session.calls)
-        self.assertIn(1504, session.calls)
+        self.assertIn(("redirected", 5012), session.calls)
+        self.assertIn(("redirected", 1504), session.calls)
         self.assertIn(163, session.calls)
-        self.assertEqual(session.calls[-1], 160)
+        self.assertEqual(session.calls[-1], ("redirected", 160))
 
     def test_rejects_ambiguous_multiple_new_ids(self):
         class AmbiguousSession(FakeSession):
